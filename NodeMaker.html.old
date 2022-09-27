@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+
+<body>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+    <script src="./pathfinding.js"></script>
+    <script src="./Maps/Nodes_Carentan.js"></script>
+
+    <img id="map" src="
+https://cdn.discordapp.com/attachments/645036946976145409/733387703223058533/Carentan_TacMap02.jpg
+" style="opacity:0.8">
+
+
+
+    <script>
+        var nodeArray = [];
+        var startNode = null;
+        var mode = 0;
+        var graph = {};
+
+        const NODE_SIZE = 7;
+        const LINE_WEIGHT = 3;
+        const MAP = document.getElementById("map");
+
+
+        function getCenter(element) {
+            const { top, left, width, height } = element.getBoundingClientRect();
+            return { x: window.scrollX + left + (width / 2), y: window.scrollY + top + (height / 2) };
+        }
+
+        function getDistance(a, b) {
+            const aPosition = getCenter(a);
+            const bPosition = getCenter(b);
+
+            return Math.hypot(aPosition.x - bPosition.x, aPosition.y - bPosition.y);
+        }
+
+        function drawLine(startNode, endNode, color = "green") {
+            let startCenter = getCenter(startNode);
+            let endCenter = getCenter(endNode);
+            let dist = getDistance(startNode, endNode)
+            let angle = Math.atan2(endCenter.y - startCenter.y, endCenter.x - startCenter.x);
+
+            let line = document.createElement("div");
+            if (color == "black") {
+                line.classList += "Line";
+            }
+            line.style.height = LINE_WEIGHT + "px";
+            line.style.width = dist + "px";
+            line.style.background = color;
+            line.style.position = "absolute";
+            line.style.top = (startCenter.y - (LINE_WEIGHT / 2))+ "px";
+            line.style.left = startCenter.x + "px";
+            line.style.transformOrigin = "0px " + (LINE_WEIGHT / 2) + "px";
+            line.style.transform = `rotate(${angle}rad)`;
+            return line;
+        }
+
+        function makeNode(x, y,id="") {
+            var node = document.createElement("div");
+            if (nodeArray.length == 0) {
+                node.id = "Node0";
+            } else {
+                node.id = "Node" + (parseInt(nodeArray[nodeArray.length - 1].id.replace("Node", "")) + 1);
+            }
+            if(id.length != 0){
+                node.id = id;
+            }
+            node.setAttribute("Nodes", "");
+            node.style.width = NODE_SIZE + "px";
+            node.style.height = NODE_SIZE + "px";
+            node.style.background = "red";
+            node.style.position = "absolute";
+            node.style.top = y + "px";
+            node.style.left = x + "px";
+            node.style.zIndex = "100";
+            node.onclick = nodeClicked;
+            return node;
+        }
+
+        function nodeClicked(event) {
+            if (event.ctrlKey) { // generate graph and path
+                if (startNode != null) {
+                    generateFWADistances(mapNodes);
+                    return;
+                    graph = {};
+                    nodeArray.forEach(function (item, index) {
+                        let connections = {};
+                        let nodes = item.getAttribute("Nodes").substr(2).split(',');
+                        nodes.forEach(function (cNode, index) {
+                            if (cNode.trim().length != 0) {
+                                let n1 = nodeArray[cNode.trim().slice(4)];
+                                connections[cNode.trim()] = getDistance(item, n1);
+                            }
+                        });
+                        graph[item.id] = connections;
+                    });
+                    let path = findShortestPath(graph, startNode.id, this.id);
+                    console.log("path", path)
+                    startNode.style.background = "red";
+                    startNode = null;
+                    for (let i = 0; i < path.path.length - 1; i++) {
+                        let start = document.getElementById(path.path[i]);
+                        let end = document.getElementById(path.path[i + 1]);
+                        document.body.appendChild(drawLine(start, end, "black"));
+                    }
+                }
+                return;
+            }
+            if (startNode == null) {
+                startNode = this;
+                startNode.style.background = "black";
+            } else if (startNode == this) {
+                startNode.style.background = "red";
+                startNode = null;
+            } else {
+                startNode.setAttribute("Nodes", (startNode.getAttribute("Nodes") ?? "") + ", " + this.id);
+                this.setAttribute("Nodes", (this.getAttribute("Nodes") ?? "") + ", " + startNode.id);
+                document.body.appendChild(drawLine(startNode, this, "green"));
+                startNode.style.background = "red";
+                startNode = null;
+            }
+        }
+
+        function handleKeyPress(event) {
+            // Delete to remove a node
+            if (event.key == "Delete") {
+                if (startNode != null && nodeArray.indexOf(startNode) != -1) {
+                    nodeArray.forEach(function (item, index) {
+                        item.setAttribute("Nodes", item.getAttribute("Nodes").replace(", " + startNode.id, ""));
+                    });
+                    nodeArray.splice(nodeArray.indexOf(startNode), 1);
+                    startNode.remove();
+                    startNode = null;
+                }
+            } else if (event.key == 's') {
+                console.log("Saving");
+                let clickPoints = {};
+                nodeArray.forEach(function (item, index) {
+                    clickPoints[item.id] = {x: item.style.left.slice(0,-2), y: item.style.top.slice(0,-2), nodes: item.getAttribute("Nodes")};
+                })
+                console.log(clickPoints);
+            } else if (event.key == 'l') {
+                // Make all the nodes
+                for(let id in mapNodes){
+                    let item = mapNodes[id];
+                    let xIndex = nodeArray.map(n=>n.offsetTop).indexOf(parseInt(item.x));
+                    // if this node is a duplicate, don't load it
+                    if (xIndex != -1 && nodeArray.map(n=>n.offsetLeft)[xIndex] == parseInt(item.x) && nodeArray.map(n=>n.offsetTop)[xIndex] == parseInt(item.y)){
+                        console.log("skip loading",id, ", conflict with existing", xIndex);
+                        continue;
+                    }
+                    let event = new MouseEvent("Simulated", { clientX: parseInt(item.x), clientY: parseInt(item.y), button: 0 });
+                    let node = makeNode(parseInt(item.x), parseInt(item.y),id);
+                    document.body.appendChild(node);
+                    nodeArray.push(node);
+                    // For each node this one is supposed to connect to, make the line
+                    // if (nodeArray.length > 400) {continue;}
+                    for (let n of item.nodes.slice(2).split(", ")) {
+                        let connNodeIndex = nodeArray.findIndex((node) => node.id == n);
+                        if (connNodeIndex != -1) {
+                            nodeArray[nodeArray.length - 1].click();
+                            nodeArray[connNodeIndex].click();
+                        }
+                    }
+                };
+            } else if (event.key == 'c') {  // Switch modes
+                if (mode == 1) {    // Maker mode
+                    MAP.onclick = function (event) {
+                        var x = 1 + event.pageX - MAP.offsetLeft + Math.ceil(NODE_SIZE / 2);
+                        var y = 1 + event.pageY - MAP.offsetTop + Math.ceil(NODE_SIZE / 2);
+
+                        let node = makeNode(x, y);
+                        document.body.appendChild(node);
+                        nodeArray.push(node);
+                    }
+                    mode = 0;
+                } else if (mode == 0) { // Nav mode
+                    // build graph
+                    graph = {};
+                    nodeArray.forEach(function (node, index) {
+                        let connections = {};
+                        let nodes = node.getAttribute("Nodes").substr(2).split(',');
+                        nodes.forEach(function (nextNode, index) {
+                            nextNode = nextNode.trim();
+                            if (nextNode.length != 0) {
+                                let dist = getDistance(node, document.getElementById(nextNode));
+                                connections[nextNode] = dist;
+                            }
+                        });
+                        graph[node.id] = connections;
+                    });
+                    MAP.onclick = function (event) {
+                        // find node nearest to click position
+                        nearestNode = nodeArray[0];
+                        nodeArray.forEach(function (node) {
+                            let center = getCenter(node);
+                            let startCenter = getCenter(nearestNode);
+                            if (Math.hypot(event.pageX - MAP.offsetLeft - center.x, event.pageY - MAP.offsetTop - center.y) < Math.hypot(event.pageX - MAP.offsetLeft - startCenter.x, event.pageY - MAP.offsetTop - startCenter.y)) {
+                                nearestNode = node;
+                            }
+                        });
+                        nearestNode.style.background = "yellow";
+                        if (event.ctrlKey){ // make route
+                            if (startNode != null) {
+                                let path = findShortestPath(graph, startNode.id, nearestNode.id);
+                                console.log("path", path)
+                                startNode.style.background = "red";
+                                nearestNode.style.background = "red";
+                                startNode = null;
+                                for (let i = 0; i < path.path.length - 1; i++) {
+                                    let start = document.getElementById(path.path[i]);
+                                    let end = document.getElementById(path.path[i + 1]);
+                                    document.body.appendChild(drawLine(start, end, "black"));
+                                }
+                            }
+                        } else {    // set as start point
+                            startNode = nearestNode;
+                        }
+                    }
+                    mode = 1;
+                }
+                console.log("Switched to mode",mode);
+            } else if (event.key == 'r') { // reset route
+                if (mode == 1) {
+                    let elements = document.getElementsByClassName("Line");
+                    while (elements.length > 0) {
+                        elements[0].remove();
+                    }
+                }
+            }
+        }
+
+        for (let i = 8; i < document.getElementById("map").naturalWidth; i += (document.getElementById("map").naturalWidth / 30)) {
+            let vline = document.createElement("div");
+            vline.style.position = "absolute";
+            vline.style.zIndex = "-1";
+            vline.style.height = document.getElementById("map").naturalWidth+"px";
+            vline.style.width = "1px";
+            vline.style.background = "black";
+            vline.style.top = "8px";
+            vline.style.left = i + "px";
+            document.body.appendChild(vline);
+            let hline = document.createElement("div");
+            hline.style.position = "absolute";
+            hline.style.zIndex = "-1";
+            hline.style.height = "1px";
+            hline.style.width = document.getElementById("map").naturalWidth+"px";
+            hline.style.background = "black";
+            hline.style.top = i + "px";
+            hline.style.left = "8px";
+            document.body.appendChild(hline);
+        }
+
+        $(document).ready(function () {
+            MAP.onclick = function (event) {
+                if (event.shiftKey) {   // Make new node and auto step nodes between new node and last made
+                    startPt = getCenter(nodeArray[nodeArray.length - 1]);
+
+                    var x = 1 + event.pageX - this.offsetLeft + (NODE_SIZE / 2);
+                    var y = 1 + event.pageY - this.offsetTop + (NODE_SIZE / 2);
+                    let node = makeNode(x, y);
+                    document.body.appendChild(node);
+                    nodeArray.push(node);
+                    endPt = getCenter(node);
+                    node.remove();
+                    nodeArray.splice(nodeArray.length - 1, 1);
+
+                    dist = Math.hypot(startPt.x - endPt.x, startPt.y - endPt.y);
+                    let segLen = dist / Math.ceil(dist / 72);
+                    for(let i=1; i<=(dist/segLen); i+=1){
+                        let n = makeNode(startPt.x + ((i / (dist / segLen)) * (endPt.x - startPt.x))-3, startPt.y + ((i / (dist / segLen)) * (endPt.y - startPt.y))-3);
+                        document.body.appendChild(n);
+                        nodeArray.push(n);
+                    }
+                    return;
+                }
+                var x = 1 + event.pageX - MAP.offsetLeft + Math.ceil(NODE_SIZE / 2);
+                var y = 1 + event.pageY - MAP.offsetTop + Math.ceil(NODE_SIZE / 2);
+
+                let node = makeNode(x, y);
+                document.body.appendChild(node);
+                nodeArray.push(node);
+            }
+            document.onkeydown = handleKeyPress;
+        });
+        /*
+        This will iterate through all nodes, click them to show paths. Good tester to make sure all routes are good. I suspect the djikstra's algo is incorrectly done.
+        The sleep func is out because it takes enough time to generate a fresh graph every time that I don't need to wait longer
+function sleep(ms) {return new Promise(resolve => setTimeout(resolve, ms));}
+for(let a of nodeArray){
+    for(let b of nodeArray) {
+        if(a==b){continue;}
+        a.click();
+        let center = getCenter(b);
+        let endEvent = new MouseEvent("Simulated", {clientX:center.x, clientY:center.y, button:0, ctrlKey:true});
+        console.log(a.id," -> ",b.id);
+        b.onclick(endEvent);
+        //await sleep(1000);
+        let elements = document.getElementsByClassName("Line");
+        while (elements.length > 0) {
+            elements[0].remove();
+        }
+    }
+}
+        */
+    </script>
+</body>
+
+</html>
+

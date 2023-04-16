@@ -1,0 +1,589 @@
+<!-- Page Modes -Node creation
+    -Connection creation
+    -Viewer == this is just for checking routes and such
+
+    Do not make connections naturally bidirectional any more. Especially when tracks are involved, things become one-way
+    Nodes
+    -Types = the terrain the node is positioned on
+    --Road      gray/light gray
+    --Offroad   brown/tan
+    --Tracks    black
+    Connection
+    -Types = the terrain the connection goes through
+    --Road
+    --Offroad
+    --Tracks
+    -TrucksOnly = I've found some routes that are just too narrow for many/all tanks
+    -Difficulty - use to color connections
+    --Easy = largely flat, open, very few or obvious hard obstructions; eg fields, many roads. Easy routes barely require WWW and can be taken at full speed
+    --Medium = more obstructions, bumpier, places where there is a pretty good chance to get stuck; eg roads in downtown Carentan,
+                destroyed sections of track on Stalingrad. Basically routes that require precision, but you aren't gonna white-knuckle it
+    --Hard = require experience and precision to take, and may not be accurately described by the map as a result. May only be valid from specific angles
+                eg the jump down from the briged on Carentan, tight corners that require 7+ pt turns to make, going between trees on Hurtgen or Hill 400
+ -->
+
+
+<!DOCTYPE html>
+<html>
+
+<body>
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+  <script src="./pathfinding.js"></script>
+  <script src="./Maps/Nodes_Carentan.js"></script>
+
+  <img id="map" src="
+https://cdn.discordapp.com/attachments/645036946976145409/733387703223058533/Carentan_TacMap02.jpg
+" style="opacity:0.8">
+<!-- This is the floating text box with the status details so I don't need the console open and interrupting my keypresses -->
+<!-- <div style="position: fixed; top: 10px; right: 10px; display: inline-grid; grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(11, 1fr); grid-column-gap: 0px; grid-row-gap: 0px; ">
+  <h4 style="grid-area: 1/1/2/2;">Page Mode:</h4>
+  <h3 style="grid-area: 1/2/1/3;">Value</h3>
+  <h4 style=" grid-area: 2/1/2/2; ">Node Type:</h4>
+  <h4 style=" grid-area: 3/1/3/2; border-bottom: 8px solid #bbb; border-radius: 5px; ">Connection Difficulty:</h4>
+  <h4 style=" grid-area: 4/1/4/2; ">Selected Node:</h4>
+  <h4 style=" grid-area: 5/1/5/2; ">Type:</h4>
+  <h4 style=" grid-area: 6/1/6/2; border-bottom: 8px solid #bbb; border-radius: 5px; ">Connections:</h4>
+  <h4 style=" grid-area: 7/1/7/2; ">Selected Connection:</h4>
+  <h4 style=" grid-area: 8/1/8/2; ">Type:</h4>
+  <h4 style=" grid-area: 9/1/9/2; ">Difficulty:</h4>
+</div> -->
+
+  <script>
+    console.log(`Controls:
+    C to clear all Nodes and Connections
+    D to delete the selected Node or Connection
+    ESC to cancel any current selection
+    H to change Connection difficulty (easy,medium,hard)
+    L to load
+    M to change modes (node,connection,view)
+    P to run test pattern
+    S to save
+    T to change Node type (road,offroad,track)
+
+    In Node Creation Page Mode, Ctrl + Arrows moves the node position by single pixels in a direction
+
+    Can only create Nodes or Connections in their respective modes
+    Click on the map to create a Node
+    Shift + click to create an equidistant line of Nodes from the last selected Node
+    Click on a Node to select it
+    Click on a second Node in Connection mode to create a bidirectional connection
+    Shift + click on a second Node in Connection mode to create a one-way connection
+
+    Toggles to the Node type or Connection difficulty persist globally, unless there is a current selection
+    `);
+    // Done with Nodes
+    // Done with Connections
+    // Done Save nodes
+    // Done load nodes
+    // Done Clear all
+    // WIP Viewer Mode
+    // -- Done Test pattern
+    // -- Shortest single path
+    // Add action on save where all nodes numbers are redone, in order to remove any holes in the count from deleting nodes
+    //  This will also prevent wasted rows and columns in the adjacency matrix, which will already be huge anyway
+    //  Count from top to bottom, left to right
+    // Add TrucksOnly tag to connections
+    // When a node is deleted, delete any connections too
+    // Better way to print all paths, since this takes forever. Maybe just print the computed paths for all at once from a given start point? Since we're just looking for deviations
+
+    var connectionArray = [];
+    var nodeArray = [];
+    var startNode = null;
+    var mode = 0;
+    var graph = {};
+
+    const NODE_SIZE = 5;
+    const LINE_WEIGHT = 3;
+    const MAP = document.getElementById("map");
+
+    var pageMode = 0;
+    var type = 0;
+    var difficulty = 0;
+    var selectedNode = null;
+    var selectedConnection = null;
+
+    function printCurrentState() {
+      console.log(`------------------------------
+Page Mode: ${pageMode == 0 ? "Node" : (pageMode == 1 ? "Connection" : "Viewer")}
+Node Type: ${type == 0 ? "Road" : (type == 1 ? "Offroad" : "Train Track")}
+Conn Diff: ${difficulty == 0 ? "Easy" : (difficulty == 1 ? "Medium" : "Hard")}`);
+    }
+    printCurrentState();
+    try {
+      mapConnections;
+    } catch (error) {
+      mapConnections = [];
+    }
+
+    // onkeypress doesn't get all keys
+    document.onkeydown = async function (event) {
+      switch (event.key) {
+        case "k":
+          // Clear all connections, and renumber nodes going from top->btm, left->right
+          for (let conn of connectionArray) {
+            let start = document.getElementById(conn.id.split("->")[0]);
+            let end = document.getElementById(conn.id.split("->")[1]);
+            if (end == null || start == null) continue;
+            // Remove this connection from them
+            start.setAttribute("Nodes", start.getAttribute("nodes").replace(end.id + ", ", ""));
+            conn.remove();
+          }
+          nodeArray.sort(function(a,b){
+            if (a.offsetLeft == b.offsetLeft) 
+              return a.offsetTop - b.offsetTop;
+            return a.offsetLeft - b.offsetLeft;
+          });
+          nodeArray.forEach(function (item, index) {
+            item.id = "Node" + index;
+            item.innerText = "";
+          });
+          break;
+        case "j":
+          // color visualizer for the frequency of line segments in all paths
+          let connCounter = {};
+          let tn = {};
+          nodeArray.forEach(function (item, index) {
+              tn[item.id] = { x: item.style.left.slice(0, -2), y: item.style.top.slice(0, -2), nodes: item.getAttribute("Nodes"), type: item.getAttribute("type") };
+          });
+          let r1 = generateFWADistances(tn);
+          for (let a of nodeArray) {
+              for (let b of nodeArray) {
+                  if (a == b) { continue; }
+                  let path = findShortestPathFWA(parseInt(a.id.slice(4)), parseInt(b.id.slice(4)), r1.next);
+                  for (let i = 0; i < path.length - 1; i++) {
+                      let connStr = `Node${path[i]}->Node${path[i+1]}`;
+                      if (connCounter[connStr] == undefined)
+                          connCounter[connStr] = 0;
+                      connCounter[connStr]++;
+                  }
+              }
+          }
+          let max = 0;
+          for (let [k, v] of Object.entries(connCounter)) {
+              if (v > max)
+                  max = v;
+          }
+          //https://codepen.io/rantunes/pen/grPgVy
+          for (let c of connectionArray) {
+              c.style.backgroundColor = 'hsl('+(3 * (connCounter[c.id]/max * 100)) + ', 100%, 45%)';
+              if (connCounter[c.id] <=25)
+                  c.style.backgroundColor = "black";
+          }
+          break;
+        case "Escape":
+          // Deselect the selected element
+          if (selectedNode != null) {
+            selectedNode.style.border = "";
+            selectedNode = null;
+          }
+          if (selectedConnection != null) {
+            selectedConnection.style.border = "";
+            selectedConnection = null;
+          }
+          break;
+        case "t":
+          // Change type of selected node, or if none selected, the type of the next to be made
+          if (pageMode != 0) break;
+          if (selectedNode != null) {
+            let tempType = (selectedNode.getAttribute("Type") ?? "Road") == "Road" ? 1 : ((selectedNode.getAttribute("Type") ?? "Road") == "Offroad" ? 2 : 0);
+            selectedNode.setAttribute("Type", tempType == 0 ? "Road" : (tempType == 1 ? "Offroad" : "Track"));
+            selectedNode.style.backgroundColor = tempType == 0 ? "blue" : (tempType == 1 ? "saddlebrown" : "black");
+            console.log("Switched node to type:", (tempType == 0 ? "Road" : (tempType == 1 ? "Offroad" : "Track")));
+          } else {
+            type = (type + 1) % 3;
+            printCurrentState();
+          }
+          break;
+        case "h":
+          // Change difficulty of selected connection, or if none selected, the type of the next to be made
+          if (pageMode != 1) break;
+          if (selectedConnection != null) {
+            let tempDifficulty = (selectedConnection.getAttribute("Difficulty") ?? "Easy") == "Easy" ? 1 : ((selectedConnection.getAttribute("Difficulty") ?? "Easy") == "Medium" ? 2 : 0);
+            selectedConnection.setAttribute("Difficulty", tempDifficulty == 0 ? "Easy" : (tempDifficulty == 1 ? "Medium" : "Hard"));
+            selectedConnection.style.backgroundColor = tempDifficulty == 0 ? "green" : (tempDifficulty == 1 ? "yellow" : "red");
+            console.log("Switched connection to difficulty:", (tempDifficulty == 0 ? "Easy" : (tempDifficulty == 1 ? "Medium" : "Hard")));
+          } else {
+            difficulty = (difficulty + 1) % 3;
+            printCurrentState();
+          }
+          break;
+        case "d":
+          if (pageMode == 0) {
+            // Delete selected node
+            // If a node is selected and it exists in the global array
+            if (selectedNode != null && nodeArray.indexOf(selectedNode) != -1) {
+              // Iterate the node array and remove connections to the selected node
+              nodeArray.forEach(function (item, index) {
+                item.setAttribute("Nodes", item.getAttribute("Nodes").replace(selectedNode.id + ", ", ""));
+              });
+              // Remove selected node from the global array
+              nodeArray.splice(nodeArray.indexOf(selectedNode), 1);
+              // Remove selected node from the html dom and clear the selection
+              selectedNode.remove();
+              selectedNode = null;
+            }
+          } else if (pageMode == 1 && selectedConnection != null) {
+            // Delete selected connection
+            // Check for the existence of the start and end nodes
+            let start = document.getElementById(selectedConnection.id.split("->")[0]);
+            let end = document.getElementById(selectedConnection.id.split("->")[1]);
+            // Remove this connection from them
+            start.setAttribute("Nodes", start.getAttribute("nodes").replace(end.id + ", ", ""));
+            // Delete the div
+            selectedConnection.remove();
+            selectedConnection = null;
+          }
+          break;
+        case "m":
+          if (selectedNode != null) {
+            selectedNode.style.border = "";
+            selectedNode = null;
+          }
+          if (selectedConnection != null) {
+            selectedConnection.style.border = "";
+            selectedConnection = null;
+          }
+          pageMode = (pageMode + 1) % 3;
+          printCurrentState();
+          break;
+        case "s":
+          if (selectedNode != null) {
+            selectedNode.style.border = "";
+            selectedNode = null;
+          }
+          if (selectedConnection != null) {
+            selectedConnection.style.border = "";
+            selectedConnection = null;
+          }
+          console.log("Save all data, get routes, and print necessary data");
+          savedNodes = {};
+          nodeArray.forEach(function (item, index) {
+            savedNodes[item.id] = { x: item.style.left.slice(0, -2), y: item.style.top.slice(0, -2), nodes: item.getAttribute("Nodes"), type: item.getAttribute("type") };
+          });
+          savedConnections = {};
+          connectionArray.forEach(function (item, index) {
+            savedConnections[item.id] = { start: item.id.split("->")[0], end: item.id.split("->")[1], difficulty: item.getAttribute("difficulty") };
+          });
+          // Also print pathing stuff
+          let routeNodes = {};
+          nodeArray.forEach(function (item, index) {
+            routeNodes[item.id] = { x: item.style.left.slice(0, -2), y: item.style.top.slice(0, -2), nodes: item.getAttribute("Nodes"), type: item.getAttribute("type") };
+          });
+          let res = generateFWADistances(routeNodes);
+          console.log(savedNodes);
+          console.log(savedConnections);
+          console.log(res.adjMatrix);
+          console.log(res.next);
+          break;
+        case "l":
+          if (selectedNode != null) {
+            selectedNode.style.border = "";
+            selectedNode = null;
+          }
+          if (selectedConnection != null) {
+            selectedConnection.style.border = "";
+            selectedConnection = null;
+          }
+          console.log("Load nodes from file");
+          for (let id in mapNodes) {
+            let item = mapNodes[id];
+            let xIndex = nodeArray.map(n => n.offsetTop).indexOf(parseInt(item.x));
+            // if this node is a duplicate, don't load it
+            if (xIndex != -1 && nodeArray.map(n => n.offsetLeft)[xIndex] == parseInt(item.y)) {
+              continue;
+            }
+            // Compatibility with old data format
+            if (item.type == undefined) {
+               item.type = "Road";
+               item.x = parseInt(item.x)+2;
+               item.y = parseInt(item.y)+2;
+             }
+
+            let node = makeNode(parseInt(item.x), parseInt(item.y), id, item.type == "Road" ? 0 : (item.type == "Offroad" ? 1 : 2));
+            document.body.appendChild(node);
+            nodeArray.push(node);
+          }
+          let tmp = pageMode;
+          pageMode = 1;
+          for (let id in mapNodes) {
+            let item = mapNodes[id];
+            for (let endId of item.nodes.split(", ")) {
+              if (endId == "") { continue; }
+              // Find start Node and click it
+              // Find end Node and shift click
+              let startNodeDiv = nodeArray[nodeArray.findIndex((node) => node.id == id)];
+              let endNodeDiv = nodeArray[nodeArray.findIndex((node) => node.id == endId)];
+              if (startNodeDiv == undefined) {
+                console.log("Load Error: Start node not found for connection " + id + "->" + endId);
+              } else if (endNodeDiv == undefined) {
+                console.log("Load Error: End node not found for connection " + id + "->" + endId);
+              } else {
+                startNodeDiv.click();
+                endNodeDiv.onclick(new MouseEvent("click", { button: 0, shiftKey: true }));
+                if (selectedNode != null) { selectedNode.style.border = ""; selectedNode = null; }
+              }
+            }
+          }
+          pageMode = tmp;
+          break;
+        case "c":
+          if (pageMode == 2) break;
+          console.log("Clear all nodes and connections");
+          if (selectedNode != null) {
+            selectedNode.style.border = "";
+            selectedNode = null;
+          }
+          if (selectedConnection != null) {
+            selectedConnection.style.border = "";
+            selectedConnection = null;
+          }
+          let elements = document.getElementsByTagName("div");
+          for (let i = 0; i < elements.length; i++) {
+            if (elements[i].id.includes("Node")) {
+              elements[i].remove();
+              i--;
+            }
+          }
+          nodeArray = [];
+          connectionArray = [];
+          break;
+        case "p":
+          console.log("Run test demo to show all routes and such");
+          let testNodes = {};
+          nodeArray.forEach(function (item, index) {
+            testNodes[item.id] = { x: item.style.left.slice(0, -2), y: item.style.top.slice(0, -2), nodes: item.getAttribute("Nodes"), type: item.getAttribute("type") };
+          });
+          let result = generateFWADistances(testNodes);
+          findLongestPathFWA(result.adjMatrix, result.next);
+          function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+          for (let a of nodeArray) {
+            let old_a_color = a.style.backgroundColor;
+            a.style.backgroundColor = "green"
+            for (let b of nodeArray) {
+              if (a == b) { continue; }
+              let old_b_color = b.style.backgroundColor;
+              b.style.backgroundColor = "red"
+              let path = findShortestPathFWA(parseInt(a.id.slice(4)), parseInt(b.id.slice(4)), result.next);
+              for (let i = 0; i < path.length - 1; i++) {
+                let start = document.getElementById("Node" + path[i]);
+                let end = document.getElementById("Node" + path[i + 1]);
+                document.body.appendChild(drawLine(start, end, "black"));
+              }
+              await sleep(1);
+              let elements = document.getElementsByClassName("Line");
+              while (elements.length > 0) {
+                elements[0].remove();
+              }
+              b.style.backgroundColor = old_b_color;
+            }
+            console.log(a.id);
+            a.style.backgroundColor = old_a_color;
+          }
+          break;
+        case "ArrowUp":
+          // Arrows to do fine position adjustments for nodes
+          if (selectedNode != null && pageMode == 0 && event.ctrlKey) {
+            selectedNode.style.top = (parseFloat(selectedNode.style.top) - 1) + "px";
+          }
+          break;
+        case "ArrowDown":
+          if (selectedNode != null && pageMode == 0 && event.ctrlKey) {
+            selectedNode.style.top = (parseFloat(selectedNode.style.top) + 1) + "px";
+          }
+          break;
+        case "ArrowLeft":
+          if (selectedNode != null && pageMode == 0 && event.ctrlKey) {
+            selectedNode.style.left = (parseFloat(selectedNode.style.left) - 1) + "px";
+          }
+          break;
+        case "ArrowRight":
+          if (selectedNode != null && pageMode == 0 && event.ctrlKey) {
+            selectedNode.style.left = (parseFloat(selectedNode.style.left) + 1) + "px";
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
+    MAP.onclick = function (event) {
+      // Clicking on image shouldn't do more than deselection outside node mode
+      if (pageMode != 0) {
+        if (selectedNode != null) {
+          selectedNode.style.border = "";
+          selectedNode = null;
+        }
+        if (selectedConnection != null) {
+          selectedConnection.style.border = "";
+          selectedConnection = null;
+        }
+      } else if (event.shiftKey) {   // Make new node and auto step nodes between new node and last made
+        let startPt = getCenter(nodeArray[nodeArray.length - 1]);
+        if (selectedNode != null) {
+          startPt = getCenter(selectedNode);
+        }
+
+        var node = makeNode(event.pageX - (NODE_SIZE / 2), event.pageY - (NODE_SIZE / 2));
+        document.body.appendChild(node);
+        nodeArray.push(node);
+        let endPt = getCenter(node);
+        node.remove();
+        nodeArray.splice(nodeArray.length - 1, 1);
+
+        let dist = Math.hypot(startPt.x - endPt.x, startPt.y - endPt.y);
+        let segLen = dist / Math.ceil(dist / 72); // 72 px is the furthest distance I want between nodes
+        for (let i = 1; i <= (dist / segLen); i += 1) {
+          let n = makeNode(startPt.x + ((i / (dist / segLen)) * (endPt.x - startPt.x)) - (NODE_SIZE / 2), startPt.y + ((i / (dist / segLen)) * (endPt.y - startPt.y)) - (NODE_SIZE / 2));
+          document.body.appendChild(n);
+          nodeArray.push(n);
+        }
+      } else {
+        var node = makeNode(event.pageX - (NODE_SIZE / 2), event.pageY - (NODE_SIZE / 2));
+        document.body.appendChild(node);
+        nodeArray.push(node);
+      }
+      if (selectedNode != null) {
+        selectedNode.style.border = "";
+        selectedNode = null;
+      }
+    }
+
+    function getCenter(element) {
+      const { top, left, width, height } = element.getBoundingClientRect();
+      return { x: window.scrollX + left + (width / 2), y: window.scrollY + top + (height / 2) };
+    }
+
+    function getDistance(a, b) {
+      const aPosition = getCenter(a);
+      const bPosition = getCenter(b);
+
+      return Math.hypot(aPosition.x - bPosition.x, aPosition.y - bPosition.y);
+    }
+
+    function drawLine(startNode, endNode, color = "green") {
+      let startCenter = getCenter(startNode);
+      let endCenter = getCenter(endNode);
+      let dist = getDistance(startNode, endNode)
+      let angle = Math.atan2(endCenter.y - startCenter.y, endCenter.x - startCenter.x);
+
+      let line = document.createElement("div");
+      if (color == "black") {
+        line.classList += "Line";
+      }
+      line.setAttribute("difficulty", color == "green" ? "easy" : (color == "yellow" ? "medium" : "hard"));
+      line.id = startNode.id + "->" + endNode.id;
+      line.style.height = LINE_WEIGHT + "px";
+      line.style.width = dist + "px";
+      line.style.backgroundColor = color;
+      line.style.position = "absolute";
+      line.style.top = (startCenter.y - (LINE_WEIGHT / 2)) + "px";
+      line.style.left = startCenter.x + "px";
+      // line.style.transformOrigin = "0px " + (LINE_WEIGHT / 2) + "px";
+      line.style.transformOrigin = "0px 0px";
+      line.style.transform = `rotate(${angle}rad)`;
+      line.style.boxSizing = "border-box";
+      line.onclick = lineClicked;
+      return line;
+    }
+
+    function lineClicked(event) {
+      if (selectedNode != null) {
+        selectedNode.style.border = "";
+        selectedNode = null;
+      }
+      if (selectedConnection != null) {
+        selectedConnection.style.border = "";
+      }
+      selectedConnection = this;
+      this.style.border = "1px solid lawngreen";
+    }
+
+    function makeNode(x, y, id = "", nodeType = type) {
+      var node = document.createElement("div");
+      if (nodeArray.length == 0) {
+        node.id = "Node0";
+      } else {
+        node.id = "Node" + (parseInt(nodeArray[nodeArray.length - 1].id.replace("Node", "")) + 1);
+      }
+      if (id.length != 0) {
+        node.id = id;
+      }
+      node.setAttribute("Nodes", "");
+      node.setAttribute("Type", nodeType == 0 ? "Road" : (nodeType == 1 ? "Offroad" : "Track"));
+      node.style.width = NODE_SIZE + "px";
+      node.style.height = NODE_SIZE + "px";
+      node.style.backgroundColor = nodeType == 0 ? "blue" : (nodeType == 1 ? "saddlebrown" : "black")
+      node.style.position = "absolute";
+      node.style.top = y + "px";
+      node.style.left = x + "px";
+      node.style.zIndex = "100";
+      node.style.boxSizing = "border-box";
+      node.onclick = nodeClicked;
+      return node;
+    }
+
+    function nodeClicked(event) {
+      if (selectedConnection != null) {
+        selectedConnection.style.border = "";
+        selectedConnection = null;
+      }
+      if (selectedNode != null) {
+        // Make a connection if there's a currently selected node
+        if (pageMode == 1) {
+          // console out to confirm bidirectional connection creation
+          // console.log("Node clicked ", selectedNode.id, selectedNode.getAttribute("Nodes").includes(this.id + ", "), this.id, this.getAttribute("Nodes").includes(selectedNode.id + ", "));
+          // Draw selectedNode -> this
+          // Prevent doubling up connections
+          if (!selectedNode.getAttribute("Nodes").includes(this.id+", ")) {
+            selectedNode.setAttribute("Nodes", (selectedNode.getAttribute("Nodes") ?? "") + this.id + ", ");
+            // I'm not 100% sure why, but a line from A->B does not entirely overlap a line from B->A
+            // But I'm leveraging that to show single and bi-directionality
+            let color = difficulty == 0 ? "green" : (difficulty == 1 ? "yellow" : "red");
+            let line = drawLine(selectedNode, this, color);
+            document.body.appendChild(line);
+            connectionArray.push(line);
+          }
+          // Draw this -> selectedNode
+          // If shift+click, then make it a 1-way connection. That is, don't make a reverse connection too
+          if (!event.shiftKey && !this.getAttribute("Nodes").includes(selectedNode.id+", ")) {
+            this.setAttribute("Nodes", (this.getAttribute("Nodes") ?? "") + selectedNode.id + ", ");
+            let color = difficulty == 0 ? "green" : (difficulty == 1 ? "yellow" : "red");
+            let line = drawLine(this, selectedNode, color);
+            document.body.appendChild(line);
+            connectionArray.push(line);
+          }
+        }
+        // Clear the previously selected node
+        selectedNode.style.border = "";
+        selectedNode = null;
+      }
+      // Set the newly selected node
+      selectedNode = this;
+      this.style.border = "2px solid lawngreen";
+    }
+
+    for (let i = 8; i < document.getElementById("map").naturalWidth; i += (document.getElementById("map").naturalWidth / 30)) {
+      let vline = document.createElement("div");
+      vline.style.position = "absolute";
+      vline.style.zIndex = "-1";
+      vline.style.height = document.getElementById("map").naturalWidth + "px";
+      vline.style.width = "1px";
+      vline.style.background = "black";
+      vline.style.top = "8px";
+      vline.style.left = i + "px";
+      document.body.appendChild(vline);
+      let hline = document.createElement("div");
+      hline.style.position = "absolute";
+      hline.style.zIndex = "-1";
+      hline.style.height = "1px";
+      hline.style.width = document.getElementById("map").naturalWidth + "px";
+      hline.style.background = "black";
+      hline.style.top = i + "px";
+      hline.style.left = "8px";
+      document.body.appendChild(hline);
+    }
+
+  </script>
+</body>
+
+</html>
